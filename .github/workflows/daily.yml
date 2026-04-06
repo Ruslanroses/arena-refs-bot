@@ -1,0 +1,43 @@
+name: Daily Arena Refs
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # каждый день в 9:00 UTC
+  workflow_dispatch:       # ручной запуск через GitHub UI
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Download seen_ids
+        uses: actions/cache@v4
+        with:
+          path: seen_ids.json
+          key: seen-ids-${{ hashFiles('seen_ids.json') }}
+          restore-keys: seen-ids-
+
+      - name: Run bot
+        env:
+          ARENA_TOKEN: ${{ secrets.ARENA_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SOURCE_CHANNEL_SLUG: ${{ secrets.SOURCE_CHANNEL_SLUG }}
+          OUTPUT_CHANNEL_SLUG: ${{ secrets.OUTPUT_CHANNEL_SLUG }}
+        run: python arena_refs_bot.py
+
+      - name: Save seen_ids
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: seen_ids.json
+          key: seen-ids-${{ github.run_id }}
