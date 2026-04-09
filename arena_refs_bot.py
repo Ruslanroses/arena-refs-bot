@@ -460,8 +460,19 @@ def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
     seen_file = Path(f"seen_{chat_id}.json")
     seen_ids  = set(json.loads(seen_file.read_text())) if seen_file.exists() else set()
 
+    # исключаем блоки из досок других подписчиков чтобы не повторяться
+    other_slugs = [s["slug"] for s in SUBSCRIBERS if s["chat_id"] != chat_id]
+    for other_slug in other_slugs:
+        try:
+            other_blocks = get_channel_blocks(other_slug)
+            other_ids = {b["id"] for b in other_blocks}
+            seen_ids = seen_ids | other_ids
+            log.info("Исключаю %d блоков из доски '%s'", len(other_ids), other_slug)
+        except Exception:
+            pass
+
     count = random.randint(DAILY_MIN, DAILY_MAX)
-    log.info("Блоков в доске: %d, уже видели: %d, цель: %d", len(source_blocks), len(seen_ids), count)
+    log.info("Блоков в доске: %d, уже видели/исключено: %d, цель: %d", len(source_blocks), len(seen_ids), count)
 
     new_blocks = discover_new_blocks(source_blocks, seen_ids, count)
     new_blocks = [b for b in new_blocks if b.get("id")]
