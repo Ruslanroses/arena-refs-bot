@@ -27,7 +27,11 @@ from typing import Optional
 
 ARENA_TOKEN          = os.environ["ARENA_TOKEN"]
 TELEGRAM_BOT_TOKEN   = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID     = os.environ["TELEGRAM_CHAT_ID"]
+
+# Список chat_id через запятую, например: "123456,789012"
+_chat_ids_raw = os.environ.get("TELEGRAM_CHAT_IDS", os.environ.get("TELEGRAM_CHAT_ID", ""))
+TELEGRAM_CHAT_IDS = [cid.strip() for cid in _chat_ids_raw.split(",") if cid.strip()]
+TELEGRAM_CHAT_ID  = TELEGRAM_CHAT_IDS[0] if TELEGRAM_CHAT_IDS else ""
 
 # исходный канал с твоими референсами (slug из URL)
 SOURCE_CHANNEL_SLUG  = os.environ.get("SOURCE_CHANNEL_SLUG", "interface-m0ymi5bf4dw")
@@ -324,9 +328,10 @@ def smart_filter(blocks: list[dict], candidates: dict, target_count: int) -> lis
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 
-def tg_send_message(text: str, parse_mode: str = "HTML") -> bool:
+def tg_send_message(text: str, parse_mode: str = "HTML", chat_id: str = "") -> bool:
+    cid = chat_id or TELEGRAM_CHAT_ID
     r = httpx.post(f"{TG_BASE}/sendMessage", json={
-        "chat_id":    TELEGRAM_CHAT_ID,
+        "chat_id":    cid,
         "text":       text,
         "parse_mode": parse_mode,
         "disable_web_page_preview": False,
@@ -334,9 +339,10 @@ def tg_send_message(text: str, parse_mode: str = "HTML") -> bool:
     return r.status_code == 200
 
 
-def tg_send_photo(url: str, caption: str) -> bool:
+def tg_send_photo(url: str, caption: str, chat_id: str = "") -> bool:
+    cid = chat_id or TELEGRAM_CHAT_ID
     r = httpx.post(f"{TG_BASE}/sendPhoto", json={
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": cid,
         "photo":   url,
         "caption": caption,
         "parse_mode": "HTML",
@@ -377,32 +383,34 @@ def block_caption(block: dict) -> str:
 
 def send_daily_digest(blocks: list[dict]) -> None:
     today = date.today().strftime("%d.%m.%Y")
-    header = (
-        f"🗂 <b>Референсы на {today}</b>\n"
-        f"Нашёл {len(blocks)} новых блоков на основе твоей доски."
-    )
-    tg_send_message(header)
-    time.sleep(0.5)
+    log.info("Рассылаю %d блоков для %d подписчиков…", len(blocks), len(TELEGRAM_CHAT_IDS))
 
-    sent = 0
-    for block in blocks:
-        img_url = block_image_url(block)
-        caption = block_caption(block)
-        arena_url = f"https://www.are.na/block/{block['id']}"
+    for chat_id in TELEGRAM_CHAT_IDS:
+        header = (
+            f"🗂 <b>Референсы на {today}</b>\n"
+            f"Нашёл {len(blocks)} новых блоков на основе доски."
+        )
+        tg_send_message(header, chat_id=chat_id)
+        time.sleep(0.5)
 
-        ok = False
-        if img_url:
-            ok = tg_send_photo(img_url, caption)
-        # если фото не отправилось или нет картинки — отправляем текстом со ссылкой
-        if not ok:
-            text = caption + f"\n{arena_url}"
-            ok = tg_send_message(text)
+        sent = 0
+        for block in blocks:
+            img_url   = block_image_url(block)
+            caption   = block_caption(block)
+            arena_url = f"https://www.are.na/block/{block['id']}"
 
-        if ok:
-            sent += 1
-        time.sleep(0.4)  # Telegram rate limit
+            ok = False
+            if img_url:
+                ok = tg_send_photo(img_url, caption, chat_id=chat_id)
+            if not ok:
+                text = caption + f"\n{arena_url}"
+                ok = tg_send_message(text, chat_id=chat_id)
 
-    log.info("Отправлено в Telegram: %d блоков", sent)
+            if ok:
+                sent += 1
+            time.sleep(0.4)
+
+        log.info("  chat_id %s — отправлено %d блоков", chat_id, sent)
 
 
 # ── seen ids ──────────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ jobs:
         env:
           ARENA_TOKEN: ${{ secrets.ARENA_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
           SOURCE_CHANNEL_SLUG: ${{ secrets.SOURCE_CHANNEL_SLUG }}
           OUTPUT_CHANNEL_SLUG: ${{ secrets.OUTPUT_CHANNEL_SLUG }}
         run: python arena_refs_bot.py
