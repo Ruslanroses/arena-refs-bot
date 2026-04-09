@@ -234,13 +234,21 @@ def discover_new_blocks(
         random.shuffle(sample)
         sample = sample[:max_source_sample]
 
-    # block_id → score (количество вхождений в связанные каналы)
+    # block_id → {score, channel, sources} где sources — доски, от которых нашли этот блок
     candidates: dict[int, dict] = {}
+
+    # lookup: block_id → source slug (какой доске принадлежит блок из sample)
+    block_to_source: dict[int, str] = {}
+    if blocks_per_slug:
+        for slug, slug_blocks in blocks_per_slug.items():
+            for b in slug_blocks:
+                block_to_source[b["id"]] = slug
 
     log.info("Анализирую связи %d блоков…", len(sample))
     for i, block in enumerate(sample, 1):
         bid = block["id"]
-        log.info("  [%d/%d] блок %s — ищу смежные каналы", i, len(sample), bid)
+        block_source = block_to_source.get(bid)
+        log.info("  [%d/%d] блок %s (из '%s') — ищу смежные каналы", i, len(sample), bid, block_source or "?")
 
         related_channels = get_block_channels(bid, max_pages=2)
         log.info("    найдено %d каналов", len(related_channels))
@@ -260,10 +268,12 @@ def discover_new_blocks(
                 if new_id in all_known:
                     continue
                 if new_id not in candidates:
-                    candidates[new_id] = {"score": 0, "channel": ch_slug}
+                    candidates[new_id] = {"score": 0, "channel": ch_slug, "sources": set()}
                 candidates[new_id]["score"] += 1
+                if block_source:
+                    candidates[new_id]["sources"].add(block_source)
 
-        if len(candidates) > target_count * 10:
+        if len(candidates) > target_count * 15:
             log.info("  достаточно кандидатов (%d), прерываю обход", len(candidates))
             break
 
@@ -271,11 +281,23 @@ def discover_new_blocks(
         log.warning("Не найдено новых кандидатов.")
         return []
 
-    # сортируем по score, потом перемешиваем внутри одного score-уровня
-    sorted_ids = sorted(candidates.keys(), key=lambda x: candidates[x]["score"], reverse=True)
-    top_ids    = sorted_ids[:target_count * 3]  # берём с запасом
-    random.shuffle(top_ids[:target_count * 2])  # небольшое перемешивание
-    selected   = top_ids[:target_count]
+    # Balanced selection: берём поровну из каждой исходной доски
+    if blocks_per_slug and len(blocks_per_slug) > 1:
+        per_source = max(1, target_count // len(blocks_per_slug))
+        selected = []
+        for slug in blocks_per_slug:
+            slug_cands = {bid: info for bid, info in candidates.items() if slug in info["sources"]}
+            slug_sorted = sorted(slug_cands, key=lambda x: slug_cands[x]["score"], reverse=True)
+            chosen = slug_sorted[:per_source * 3]
+            random.shuffle(chosen)
+            selected.extend(chosen[:per_source])
+            log.info("  '%s' → %d кандидатов, выбрано %d", slug, len(slug_cands), min(per_source, len(chosen)))
+        random.shuffle(selected)
+    else:
+        sorted_ids = sorted(candidates.keys(), key=lambda x: candidates[x]["score"], reverse=True)
+        top_ids    = sorted_ids[:target_count * 3]
+        random.shuffle(top_ids[:target_count * 2])
+        selected   = top_ids[:target_count]
 
     log.info("Отобрано %d новых блоков (из %d кандидатов)", len(selected), len(candidates))
 
