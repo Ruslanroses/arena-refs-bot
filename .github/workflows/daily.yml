@@ -2,8 +2,8 @@ name: Daily Arena Refs
 
 on:
   schedule:
-    - cron: '0 9 * * *'  # каждый день в 9:00 UTC
-  workflow_dispatch:       # ручной запуск через GitHub UI
+    - cron: '0 9 * * *'  # каждый день в 9:00 UTC (12:00 Tbilisi)
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -19,25 +19,29 @@ jobs:
       - name: Install dependencies
         run: pip install httpx
 
-      - name: Download seen_ids
+      - name: Restore seen_ids
         uses: actions/cache@v4
         with:
-          path: seen_ids.json
-          key: seen-ids-${{ hashFiles('seen_ids.json') }}
+          path: |
+            seen_278506234.json
+            seen_676321557.json
+          key: seen-ids-${{ github.run_id }}
           restore-keys: seen-ids-
 
       - name: Run bot
         env:
           ARENA_TOKEN: ${{ secrets.ARENA_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
-          SOURCE_CHANNEL_SLUG: ${{ secrets.SOURCE_CHANNEL_SLUG }}
-          OUTPUT_CHANNEL_SLUG: ${{ secrets.OUTPUT_CHANNEL_SLUG }}
+          SUBSCRIBERS: ${{ secrets.SUBSCRIBERS }}
+          DAILY_MIN: 20
+          DAILY_MAX: 40
         run: python arena_refs_bot.py
 
       - name: Save seen_ids
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: seen_ids.json
+          path: |
+            seen_278506234.json
+            seen_676321557.json
           key: seen-ids-${{ github.run_id }}
