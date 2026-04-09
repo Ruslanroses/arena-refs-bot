@@ -290,13 +290,28 @@ def discover_new_blocks(
     if blocks_per_slug and len(blocks_per_slug) > 1:
         per_source = max(1, target_count // len(blocks_per_slug))
         selected = []
+        selected_set = set()
+        remainder = []  # кандидаты сверх квоты — добавим если не хватает
+
         for slug in blocks_per_slug:
             slug_cands = {bid: info for bid, info in candidates.items() if slug in info["sources"]}
             slug_sorted = sorted(slug_cands, key=lambda x: slug_cands[x]["score"], reverse=True)
-            chosen = slug_sorted[:per_source * 3]
-            random.shuffle(chosen)
-            selected.extend(chosen[:per_source])
-            log.info("  '%s' → %d кандидатов, выбрано %d", slug, len(slug_cands), min(per_source, len(chosen)))
+            random.shuffle(slug_sorted[:per_source * 2])
+            taken = [bid for bid in slug_sorted[:per_source * 2] if bid not in selected_set][:per_source]
+            selected.extend(taken)
+            selected_set.update(taken)
+            log.info("  '%s' → %d кандидатов, выбрано %d", slug, len(slug_cands), len(taken))
+            # остаток — на случай если другой источник пуст
+            remainder.extend([bid for bid in slug_sorted[per_source:per_source * 4] if bid not in selected_set])
+
+        # добираем из остатка если одна из досок дала мало
+        if len(selected) < target_count:
+            random.shuffle(remainder)
+            for bid in remainder:
+                if bid not in selected_set and len(selected) < target_count:
+                    selected.append(bid)
+                    selected_set.add(bid)
+
         random.shuffle(selected)
     else:
         sorted_ids = sorted(candidates.keys(), key=lambda x: candidates[x]["score"], reverse=True)
