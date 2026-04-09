@@ -257,7 +257,69 @@ def discover_new_blocks(
         except Exception as e:
             log.warning("Не удалось получить блок %s: %s", bid, e)
 
+    # применяем умный фильтр
+    result = smart_filter(result, candidates, target_count)
     return result
+
+
+def smart_filter(blocks: list[dict], candidates: dict, target_count: int) -> list[dict]:
+    """
+    Умный фильтр без AI:
+    1. Приоритет — блоки с картинками (image блоки)
+    2. Фильтрация по score — только сильно связанные
+    3. Дедупликация по домену источника
+    4. Логирование статистики
+    """
+    images     = []
+    links      = []
+    other      = []
+    seen_domains: set[str] = set()
+
+    for block in blocks:
+        bid   = block.get("id")
+        score = candidates.get(bid, {}).get("score", 0)
+
+        # Фильтр по минимальному score — берём только хорошо связанные
+        if score < 2 and len(blocks) > target_count:
+            continue
+
+        img = block.get("image") or {}
+        has_image = bool(
+            (img.get("original") or {}).get("url") or
+            (img.get("display") or {}).get("url")
+        )
+
+        source  = block.get("source") or {}
+        src_url = source.get("url") or ""
+
+        # Дедупликация по домену
+        domain = ""
+        if src_url:
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(src_url).netloc
+            except Exception:
+                pass
+
+        if domain and domain in seen_domains:
+            continue
+        if domain:
+            seen_domains.add(domain)
+
+        if has_image:
+            images.append(block)
+        elif src_url:
+            links.append(block)
+        else:
+            other.append(block)
+
+    # Собираем: сначала картинки, потом ссылки, потом остальное
+    filtered = images + links + other
+    log.info(
+        "Умный фильтр: %d картинок, %d ссылок, %d прочих → итого %d",
+        len(images), len(links), len(other), len(filtered)
+    )
+    return filtered[:target_count]
 
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
