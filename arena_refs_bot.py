@@ -28,15 +28,30 @@ from typing import Optional
 ARENA_TOKEN          = os.environ["ARENA_TOKEN"]
 TELEGRAM_BOT_TOKEN   = os.environ["TELEGRAM_BOT_TOKEN"]
 
-# Список chat_id через запятую, например: "123456,789012"
-_chat_ids_raw = os.environ.get("TELEGRAM_CHAT_IDS", os.environ.get("TELEGRAM_CHAT_ID", ""))
-TELEGRAM_CHAT_IDS = [cid.strip() for cid in _chat_ids_raw.split(",") if cid.strip()]
-TELEGRAM_CHAT_ID  = TELEGRAM_CHAT_IDS[0] if TELEGRAM_CHAT_IDS else ""
+# Подписчики: "chat_id:arena_slug,chat_id:arena_slug"
+# Например: "278506234:interface-m0ymi5bf4dw,676321557:o_o-edoyoqb7e1m"
+def _parse_subscribers() -> list[dict]:
+    raw = os.environ.get("SUBSCRIBERS", "")
+    if raw:
+        result = []
+        for item in raw.split(","):
+            item = item.strip()
+            if ":" in item:
+                chat_id, slug = item.split(":", 1)
+                result.append({"chat_id": chat_id.strip(), "slug": slug.strip()})
+        return result
+    # fallback: старый формат
+    chat_ids_raw = os.environ.get("TELEGRAM_CHAT_IDS", os.environ.get("TELEGRAM_CHAT_ID", ""))
+    slug = os.environ.get("SOURCE_CHANNEL_SLUG", "interface-m0ymi5bf4dw")
+    return [{"chat_id": cid.strip(), "slug": slug} for cid in chat_ids_raw.split(",") if cid.strip()]
 
-# исходный канал с твоими референсами (slug из URL)
+SUBSCRIBERS = _parse_subscribers()
+TELEGRAM_CHAT_ID = SUBSCRIBERS[0]["chat_id"] if SUBSCRIBERS else ""
+
+# исходный канал (fallback для обратной совместимости)
 SOURCE_CHANNEL_SLUG  = os.environ.get("SOURCE_CHANNEL_SLUG", "interface-m0ymi5bf4dw")
 
-# канал, куда будем сохранять новые находки (создай пустой канал на are.na и вставь slug)
+# канал, куда будем сохранять новые находки
 OUTPUT_CHANNEL_SLUG  = os.environ.get("OUTPUT_CHANNEL_SLUG", SOURCE_CHANNEL_SLUG)
 
 # сколько новых референсов отправлять каждый день
@@ -428,45 +443,74 @@ def save_seen_ids(ids: set[int]) -> None:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def run():
-    log.info("═══ Are.na Daily Refs Bot ═══")
-    log.info("Источник: %s", SOURCE_CHANNEL_SLUG)
-    log.info("Выход:    %s", OUTPUT_CHANNEL_SLUG)
+def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
+    """Запускает подборку для одного подписчика."""
+    chat_id = sub["chat_id"]
+    slug    = sub["slug"]
 
-    seen_ids     = load_seen_ids()
-    source_blocks = get_channel_blocks(SOURCE_CHANNEL_SLUG)
-    log.info("Блоков в источнике: %d, уже видели: %d", len(source_blocks), len(seen_ids))
+    log.info("── Подписчик %s (доска: %s) ──", chat_id, slug)
+
+    source_blocks = get_channel_blocks(slug)
+    if not source_blocks:
+        log.warning("Доска '%s' пуста или недоступна", slug)
+        tg_send_message("😶 Не удалось загрузить доску. Попробую завтра!", chat_id=chat_id)
+        return set()
+
+    # seen_ids персональные для каждого подписчика
+    seen_file = Path(f"seen_{chat_id}.json")
+    seen_ids  = set(json.loads(seen_file.read_text())) if seen_file.exists() else set()
 
     count = random.randint(DAILY_MIN, DAILY_MAX)
-    log.info("Цель на сегодня: %d новых блоков", count)
+    log.info("Блоков в доске: %d, уже видели: %d, цель: %d", len(source_blocks), len(seen_ids), count)
 
     new_blocks = discover_new_blocks(source_blocks, seen_ids, count)
-
-    if not new_blocks:
-        tg_send_message("😶 Сегодня новых референсов не нашлось. Попробую завтра!")
-        log.info("Новых блоков нет.")
-        return
-
-    # фильтруем блоки без id
     new_blocks = [b for b in new_blocks if b.get("id")]
 
-    # сохраняем на Are.na
-    saved = 0
-    if OUTPUT_CHANNEL_SLUG and OUTPUT_CHANNEL_SLUG != SOURCE_CHANNEL_SLUG:
-        log.info("Сохраняю %d блоков в канал '%s'…", len(new_blocks), OUTPUT_CHANNEL_SLUG)
-        for block in new_blocks:
-            if add_block_to_channel(OUTPUT_CHANNEL_SLUG, block):
-                saved += 1
-            time.sleep(0.5)
-        log.info("Сохранено на Are.na: %d", saved)
+    if not new_blocks:
+        tg_send_message("😶 Сегодня новых референсов не нашлось. Попробую завтра!", chat_id=chat_id)
+        log.info("Новых блоков нет для %s", chat_id)
+        return set()
 
     # отправляем в Telegram
-    send_daily_digest(new_blocks)
+    today = date.today().strftime("%d.%m.%Y")
+    header = f"🗂 <b>Референсы на {today}</b>\nНашёл {len(new_blocks)} новых блоков на основе твоей доски."
+    tg_send_message(header, chat_id=chat_id)
+    time.sleep(0.5)
 
-    # обновляем seen_ids
+    sent = 0
+    for block in new_blocks:
+        img_url   = block_image_url(block)
+        caption   = block_caption(block)
+        arena_url = f"https://www.are.na/block/{block['id']}"
+
+        ok = False
+        if img_url:
+            ok = tg_send_photo(img_url, caption, chat_id=chat_id)
+        if not ok:
+            ok = tg_send_message(caption + f"\n{arena_url}", chat_id=chat_id)
+        if ok:
+            sent += 1
+        time.sleep(0.4)
+
+    log.info("Отправлено %s: %d блоков", chat_id, sent)
+
+    # обновляем персональные seen_ids
     new_ids = {b["id"] for b in new_blocks}
-    save_seen_ids(seen_ids | new_ids)
-    log.info("Готово! Всего видели блоков: %d", len(seen_ids) + len(new_ids))
+    seen_file.write_text(json.dumps(list(seen_ids | new_ids)))
+    return new_ids
+
+
+def run():
+    log.info("═══ Are.na Daily Refs Bot ═══")
+    log.info("Подписчиков: %d", len(SUBSCRIBERS))
+
+    for sub in SUBSCRIBERS:
+        try:
+            run_for_subscriber(sub, set())
+        except Exception as e:
+            log.error("Ошибка для подписчика %s: %s", sub.get("chat_id"), e)
+
+    log.info("═══ Готово! ═══")
 
 
 if __name__ == "__main__":
