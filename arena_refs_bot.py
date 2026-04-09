@@ -37,13 +37,14 @@ def _parse_subscribers() -> list[dict]:
         for item in raw.split(","):
             item = item.strip()
             if ":" in item:
-                chat_id, slug = item.split(":", 1)
-                result.append({"chat_id": chat_id.strip(), "slug": slug.strip()})
+                chat_id, slugs_str = item.split(":", 1)
+                slugs = [s.strip() for s in slugs_str.split("+") if s.strip()]
+                result.append({"chat_id": chat_id.strip(), "slugs": slugs, "slug": slugs[0] if slugs else ""})
         return result
     # fallback: старый формат
     chat_ids_raw = os.environ.get("TELEGRAM_CHAT_IDS", os.environ.get("TELEGRAM_CHAT_ID", ""))
     slug = os.environ.get("SOURCE_CHANNEL_SLUG", "interface-m0ymi5bf4dw")
-    return [{"chat_id": cid.strip(), "slug": slug} for cid in chat_ids_raw.split(",") if cid.strip()]
+    return [{"chat_id": cid.strip(), "slugs": [slug], "slug": slug} for cid in chat_ids_raw.split(",") if cid.strip()]
 
 SUBSCRIBERS = _parse_subscribers()
 TELEGRAM_CHAT_ID = SUBSCRIBERS[0]["chat_id"] if SUBSCRIBERS else ""
@@ -207,6 +208,7 @@ def discover_new_blocks(
     known_ids: set[int],
     target_count: int,
     max_source_sample: int = 60,
+    source_slugs: set[str] = None,
 ) -> list[dict]:
     """
     Граф-обход:
@@ -238,8 +240,8 @@ def discover_new_blocks(
             ch_slug = ch.get("slug")
             if not ch_id or not ch_slug:
                 continue
-            # пропускаем сам исходный канал
-            if ch_slug == SOURCE_CHANNEL_SLUG:
+            # пропускаем исходные каналы подписчика
+            if source_slugs and ch_slug in source_slugs:
                 continue
 
             # получаем блоки из смежного канала
@@ -446,22 +448,34 @@ def save_seen_ids(ids: set[int]) -> None:
 def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
     """Запускает подборку для одного подписчика."""
     chat_id = sub["chat_id"]
-    slug    = sub["slug"]
+    slugs   = sub.get("slugs") or [sub.get("slug", "")]
 
-    log.info("── Подписчик %s (доска: %s) ──", chat_id, slug)
+    log.info("── Подписчик %s (доски: %s) ──", chat_id, ", ".join(slugs))
 
-    source_blocks = get_channel_blocks(slug)
+    source_blocks = []
+    for slug in slugs:
+        blocks = get_channel_blocks(slug)
+        if blocks:
+            source_blocks.extend(blocks)
+            log.info("Загружено %d блоков из '%s'", len(blocks), slug)
+        else:
+            log.warning("Доска '%s' пуста или недоступна", slug)
+
     if not source_blocks:
-        log.warning("Доска '%s' пуста или недоступна", slug)
         tg_send_message("😶 Не удалось загрузить доску. Попробую завтра!", chat_id=chat_id)
         return set()
+
+    source_slugs = set(slugs)
 
     # seen_ids персональные для каждого подписчика
     seen_file = Path(f"seen_{chat_id}.json")
     seen_ids  = set(json.loads(seen_file.read_text())) if seen_file.exists() else set()
 
     # исключаем блоки из досок других подписчиков чтобы не повторяться
-    other_slugs = [s["slug"] for s in SUBSCRIBERS if s["chat_id"] != chat_id]
+    other_slugs = []
+    for s in SUBSCRIBERS:
+        if s["chat_id"] != chat_id:
+            other_slugs.extend(s.get("slugs") or [s.get("slug", "")])
     for other_slug in other_slugs:
         try:
             other_blocks = get_channel_blocks(other_slug)
@@ -474,7 +488,7 @@ def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
     count = random.randint(DAILY_MIN, DAILY_MAX)
     log.info("Блоков в доске: %d, уже видели/исключено: %d, цель: %d", len(source_blocks), len(seen_ids), count)
 
-    new_blocks = discover_new_blocks(source_blocks, seen_ids, count)
+    new_blocks = discover_new_blocks(source_blocks, seen_ids, count, source_slugs=source_slugs)
     new_blocks = [b for b in new_blocks if b.get("id")]
 
     if not new_blocks:
