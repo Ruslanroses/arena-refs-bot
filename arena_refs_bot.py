@@ -237,45 +237,50 @@ def discover_new_blocks(
     # block_id → {score, channel, sources} где sources — доски, от которых нашли этот блок
     candidates: dict[int, dict] = {}
 
-    # lookup: block_id → source slug (какой доске принадлежит блок из sample)
-    block_to_source: dict[int, str] = {}
-    if blocks_per_slug:
-        for slug, slug_blocks in blocks_per_slug.items():
-            for b in slug_blocks:
-                block_to_source[b["id"]] = slug
+    def _traverse_blocks(blocks_sample: list[dict], source_slug: str, stop_at: int) -> None:
+        """Обходит граф от blocks_sample, тегирует кандидатов source_slug."""
+        for i, block in enumerate(blocks_sample, 1):
+            bid = block["id"]
+            log.info("  [%d/%d] блок %s (из '%s') — ищу смежные каналы", i, len(blocks_sample), bid, source_slug)
 
-    log.info("Анализирую связи %d блоков…", len(sample))
-    for i, block in enumerate(sample, 1):
-        bid = block["id"]
-        block_source = block_to_source.get(bid)
-        log.info("  [%d/%d] блок %s (из '%s') — ищу смежные каналы", i, len(sample), bid, block_source or "?")
+            related_channels = get_block_channels(bid, max_pages=2)
+            log.info("    найдено %d каналов", len(related_channels))
 
-        related_channels = get_block_channels(bid, max_pages=2)
-        log.info("    найдено %d каналов", len(related_channels))
-
-        for ch in related_channels:
-            ch_id   = ch.get("id")
-            ch_slug = ch.get("slug")
-            if not ch_id or not ch_slug:
-                continue
-            # пропускаем исходные каналы подписчика
-            if source_slugs and ch_slug in source_slugs:
-                continue
-
-            # получаем блоки из смежного канала
-            ch_block_ids = get_channel_block_ids(ch_id)
-            for new_id in ch_block_ids:
-                if new_id in all_known:
+            for ch in related_channels:
+                ch_id   = ch.get("id")
+                ch_slug = ch.get("slug")
+                if not ch_id or not ch_slug:
                     continue
-                if new_id not in candidates:
-                    candidates[new_id] = {"score": 0, "channel": ch_slug, "sources": set()}
-                candidates[new_id]["score"] += 1
-                if block_source:
-                    candidates[new_id]["sources"].add(block_source)
+                if source_slugs and ch_slug in source_slugs:
+                    continue
 
-        if len(candidates) > target_count * 15:
-            log.info("  достаточно кандидатов (%d), прерываю обход", len(candidates))
-            break
+                ch_block_ids = get_channel_block_ids(ch_id)
+                for new_id in ch_block_ids:
+                    if new_id in all_known:
+                        continue
+                    if new_id not in candidates:
+                        candidates[new_id] = {"score": 0, "channel": ch_slug, "sources": set()}
+                    candidates[new_id]["score"] += 1
+                    candidates[new_id]["sources"].add(source_slug)
+
+            # early stop только в рамках этого slug'а
+            slug_count = sum(1 for c in candidates.values() if source_slug in c["sources"])
+            if slug_count >= stop_at:
+                log.info("  достаточно кандидатов от '%s' (%d), перехожу к следующей доске", source_slug, slug_count)
+                break
+
+    if blocks_per_slug and len(blocks_per_slug) > 1:
+        # Каждую доску обходим отдельно — гарантируем кандидатов от каждого источника
+        per_slug_sample = max(5, max_source_sample // len(blocks_per_slug))
+        per_slug_stop   = target_count * 8
+        for slug, slug_blocks in blocks_per_slug.items():
+            s = slug_blocks.copy()
+            random.shuffle(s)
+            log.info("Анализирую '%s' (%d блоков в сэмпле)…", slug, per_slug_sample)
+            _traverse_blocks(s[:per_slug_sample], slug, per_slug_stop)
+    else:
+        log.info("Анализирую связи %d блоков…", len(sample))
+        _traverse_blocks(sample, list(blocks_per_slug.keys())[0] if blocks_per_slug else "", target_count * 10)
 
     if not candidates:
         log.warning("Не найдено новых кандидатов.")
