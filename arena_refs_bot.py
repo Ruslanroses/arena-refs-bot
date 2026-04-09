@@ -209,6 +209,7 @@ def discover_new_blocks(
     target_count: int,
     max_source_sample: int = 60,
     source_slugs: set[str] = None,
+    blocks_per_slug: dict = None,
 ) -> list[dict]:
     """
     Граф-обход:
@@ -218,11 +219,20 @@ def discover_new_blocks(
     source_ids = {b["id"] for b in source_blocks}
     all_known  = source_ids | known_ids
 
-    # Не обходим все блоки — берём случайную выборку,
-    # чтобы каждый день находки были разными
-    sample = source_blocks.copy()
-    random.shuffle(sample)
-    sample = sample[:max_source_sample]
+    # Сэмплируем поровну из каждой доски, чтобы все источники были представлены
+    if blocks_per_slug and len(blocks_per_slug) > 1:
+        per_slug = max(5, max_source_sample // len(blocks_per_slug))
+        sample = []
+        for slug_blocks in blocks_per_slug.values():
+            s = slug_blocks.copy()
+            random.shuffle(s)
+            sample.extend(s[:per_slug])
+        random.shuffle(sample)
+        log.info("Сбалансированный сэмпл: %d блоков из %d досок (%d на доску)", len(sample), len(blocks_per_slug), per_slug)
+    else:
+        sample = source_blocks.copy()
+        random.shuffle(sample)
+        sample = sample[:max_source_sample]
 
     # block_id → score (количество вхождений в связанные каналы)
     candidates: dict[int, dict] = {}
@@ -452,10 +462,12 @@ def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
 
     log.info("── Подписчик %s (доски: %s) ──", chat_id, ", ".join(slugs))
 
+    blocks_per_slug: dict[str, list[dict]] = {}
     source_blocks = []
     for slug in slugs:
         blocks = get_channel_blocks(slug)
         if blocks:
+            blocks_per_slug[slug] = blocks
             source_blocks.extend(blocks)
             log.info("Загружено %d блоков из '%s'", len(blocks), slug)
         else:
@@ -488,7 +500,7 @@ def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
     count = random.randint(DAILY_MIN, DAILY_MAX)
     log.info("Блоков в доске: %d, уже видели/исключено: %d, цель: %d", len(source_blocks), len(seen_ids), count)
 
-    new_blocks = discover_new_blocks(source_blocks, seen_ids, count, source_slugs=source_slugs)
+    new_blocks = discover_new_blocks(source_blocks, seen_ids, count, source_slugs=source_slugs, blocks_per_slug=blocks_per_slug)
     new_blocks = [b for b in new_blocks if b.get("id")]
 
     if not new_blocks:
