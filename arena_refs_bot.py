@@ -23,6 +23,13 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-7s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
 # ── конфиг ────────────────────────────────────────────────────────────────────
 
 ARENA_TOKEN          = os.environ["ARENA_TOKEN"]
@@ -105,14 +112,6 @@ ARENA_BASE  = "https://api.are.na/v2"
 TG_BASE     = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 PER_PAGE    = 100   # максимум для Are.na API
 RATE_SLEEP  = 0.3   # секунды между запросами (rate limit)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-7s  %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger(__name__)
-
 
 # ── Are.na API ────────────────────────────────────────────────────────────────
 
