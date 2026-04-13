@@ -22,9 +22,7 @@ jobs:
       - name: Restore seen_ids
         uses: actions/cache@v4
         with:
-          path: |
-            seen_278506234.json
-            seen_676321557.json
+          path: seen_*.json
           key: seen-ids-${{ github.run_id }}
           restore-keys: seen-ids-
 
@@ -35,13 +33,15 @@ jobs:
           SUBSCRIBERS: ${{ secrets.SUBSCRIBERS }}
           DAILY_MIN: 20
           DAILY_MAX: 40
+          BOT_NAME: RefArena
+          DEFAULT_SLUGS: ${{ secrets.DEFAULT_SLUGS }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: python arena_refs_bot.py
 
       - name: Save seen_ids
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: |
-            seen_278506234.json
-            seen_676321557.json
+          path: seen_*.json
           key: seen-ids-${{ github.run_id }}

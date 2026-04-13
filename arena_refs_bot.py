@@ -30,16 +30,55 @@ TELEGRAM_BOT_TOKEN   = os.environ["TELEGRAM_BOT_TOKEN"]
 
 # Подписчики: "chat_id:arena_slug,chat_id:arena_slug"
 # Например: "278506234:interface-m0ymi5bf4dw,676321557:o_o-edoyoqb7e1m"
+def _load_gist_subscribers(bot_name: str, default_slugs: list[str]) -> list[dict]:
+    """Загружает подписчиков из GitHub Gist для данного бота."""
+    gist_id = os.environ.get("GIST_ID", "")
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    if not gist_id or not github_token:
+        return []
+    try:
+        r = httpx.get(
+            f"https://api.github.com/gists/{gist_id}",
+            headers={"Authorization": f"token {github_token}"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        content = r.json()["files"]["subscribers.json"]["content"]
+        data = json.loads(content)
+        subs = [
+            {"chat_id": s["chat_id"], "slugs": default_slugs, "slug": default_slugs[0] if default_slugs else ""}
+            for s in data.get(bot_name, [])
+        ]
+        log.info("Gist: загружено %d подписчиков для '%s'", len(subs), bot_name)
+        return subs
+    except Exception as e:
+        log.warning("Не удалось загрузить Gist: %s", e)
+        return []
+
+
 def _parse_subscribers() -> list[dict]:
     raw = os.environ.get("SUBSCRIBERS", "")
+    result = []
     if raw:
-        result = []
         for item in raw.split(","):
             item = item.strip()
             if ":" in item:
                 chat_id, slugs_str = item.split(":", 1)
                 slugs = [s.strip() for s in slugs_str.split("+") if s.strip()]
                 result.append({"chat_id": chat_id.strip(), "slugs": slugs, "slug": slugs[0] if slugs else ""})
+
+    # Загружаем новых подписчиков из Gist (только если BOT_NAME задан)
+    bot_name = os.environ.get("BOT_NAME", "")
+    default_slugs_raw = os.environ.get("DEFAULT_SLUGS", "")
+    default_slugs = [s.strip() for s in default_slugs_raw.split("+") if s.strip()]
+    if bot_name and default_slugs:
+        existing_ids = {s["chat_id"] for s in result}
+        for sub in _load_gist_subscribers(bot_name, default_slugs):
+            if sub["chat_id"] not in existing_ids:
+                result.append(sub)
+                log.info("Новый подписчик из Gist: %s", sub["chat_id"])
+
+    if result:
         return result
     # fallback: старый формат
     chat_ids_raw = os.environ.get("TELEGRAM_CHAT_IDS", os.environ.get("TELEGRAM_CHAT_ID", ""))
