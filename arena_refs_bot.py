@@ -488,38 +488,6 @@ def block_caption(block: dict) -> str:
     return "  ·  ".join(parts)
 
 
-def send_daily_digest(blocks: list[dict]) -> None:
-    today = date.today().strftime("%d.%m.%Y")
-    log.info("Рассылаю %d блоков для %d подписчиков…", len(blocks), len(TELEGRAM_CHAT_IDS))
-
-    for chat_id in TELEGRAM_CHAT_IDS:
-        header = (
-            f"🗂 <b>Референсы на {today}</b>\n"
-            f"Нашёл {len(blocks)} новых блоков на основе доски."
-        )
-        tg_send_message(header, chat_id=chat_id)
-        time.sleep(0.5)
-
-        sent = 0
-        for block in blocks:
-            img_url   = block_image_url(block)
-            caption   = block_caption(block)
-            arena_url = f"https://www.are.na/block/{block['id']}"
-
-            ok = False
-            if img_url:
-                ok = tg_send_photo(img_url, caption, chat_id=chat_id)
-            if not ok:
-                text = caption + f"\n{arena_url}"
-                ok = tg_send_message(text, chat_id=chat_id)
-
-            if ok:
-                sent += 1
-            time.sleep(0.4)
-
-        log.info("  chat_id %s — отправлено %d блоков", chat_id, sent)
-
-
 # ── seen ids ──────────────────────────────────────────────────────────────────
 
 def load_seen_ids() -> set[int]:
