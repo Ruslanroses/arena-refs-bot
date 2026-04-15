@@ -92,8 +92,8 @@ def _parse_subscribers() -> list[dict]:
     slug = os.environ.get("SOURCE_CHANNEL_SLUG", "interface-m0ymi5bf4dw")
     return [{"chat_id": cid.strip(), "slugs": [slug], "slug": slug} for cid in chat_ids_raw.split(",") if cid.strip()]
 
-SUBSCRIBERS = _parse_subscribers()
-TELEGRAM_CHAT_ID = SUBSCRIBERS[0]["chat_id"] if SUBSCRIBERS else ""
+SUBSCRIBERS: list = []
+TELEGRAM_CHAT_ID: str = ""
 
 # исходный канал (fallback для обратной совместимости)
 SOURCE_CHANNEL_SLUG  = os.environ.get("SOURCE_CHANNEL_SLUG", "interface-m0ymi5bf4dw")
@@ -586,6 +586,9 @@ def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
 
 
 def run():
+    global SUBSCRIBERS, TELEGRAM_CHAT_ID
+    SUBSCRIBERS = _parse_subscribers()
+    TELEGRAM_CHAT_ID = SUBSCRIBERS[0]["chat_id"] if SUBSCRIBERS else ""
     log.info("═══ Are.na Daily Refs Bot ═══")
     log.info("Подписчиков: %d", len(SUBSCRIBERS))
 
