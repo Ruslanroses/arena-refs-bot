@@ -52,10 +52,20 @@ def _load_gist_subscribers(bot_name: str, default_slugs: list[str]) -> list[dict
         r.raise_for_status()
         content = r.json()["files"]["subscribers.json"]["content"]
         data = json.loads(content)
-        subs = [
-            {"chat_id": s["chat_id"], "slugs": default_slugs, "slug": default_slugs[0] if default_slugs else ""}
-            for s in data.get(bot_name, [])
-        ]
+        subs = []
+        for s in data.get(bot_name, []):
+            sub = {
+                "chat_id": s["chat_id"],
+                "slugs": default_slugs,
+                "slug": default_slugs[0] if default_slugs else "",
+            }
+            # Per-subscriber DAILY_MIN/MAX (optional, D-02)
+            # Cap at 100 to prevent accidental extreme values (T-03-04)
+            if "daily_min" in s:
+                sub["daily_min"] = min(int(s["daily_min"]), 100)
+            if "daily_max" in s:
+                sub["daily_max"] = min(int(s["daily_max"]), 100)
+            subs.append(sub)
         log.info("Gist: загружено %d подписчиков для '%s'", len(subs), bot_name)
         return subs
     except Exception as e:
@@ -104,6 +114,9 @@ OUTPUT_CHANNEL_SLUG  = os.environ.get("OUTPUT_CHANNEL_SLUG", SOURCE_CHANNEL_SLUG
 # сколько новых референсов отправлять каждый день
 DAILY_MIN = int(os.environ.get("DAILY_MIN", 20))
 DAILY_MAX = int(os.environ.get("DAILY_MAX", 40))
+# Per-subscriber override: в Gist subscriber dict можно задать
+# "daily_min": int и "daily_max": int (опциональные поля, макс. 100).
+# Если не заданы — используются глобальные DAILY_MIN/DAILY_MAX.
 
 # файл для хранения уже виденных block id
 SEEN_IDS_FILE = Path(os.environ.get("SEEN_IDS_FILE", "seen_ids.json"))
@@ -600,8 +613,11 @@ def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
         except Exception:
             pass
 
-    count = random.randint(DAILY_MIN, DAILY_MAX)
-    log.info("Блоков в доске: %d, уже видели/исключено: %d, цель: %d", len(source_blocks), len(seen_ids), count)
+    sub_min = sub.get("daily_min", DAILY_MIN)
+    sub_max = sub.get("daily_max", DAILY_MAX)
+    count = random.randint(sub_min, sub_max)
+    log.info("Цель для %s: %d блоков (min=%d, max=%d)", chat_id, count, sub_min, sub_max)
+    log.info("Блоков в доске: %d, уже видели/исключено: %d", len(source_blocks), len(seen_ids))
 
     new_blocks = discover_new_blocks(source_blocks, seen_ids, count, source_slugs=source_slugs, blocks_per_slug=blocks_per_slug)
     new_blocks = [b for b in new_blocks if b.get("id")]
