@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 9 * * *'  # каждый день в 9:00 UTC (12:00 Tbilisi)
   workflow_dispatch:
+    inputs:
+      target_chat_id:
+        description: 'Отправить только этому chat_id (пусто = всем подписчикам)'
+        required: false
+        default: ''
 
 jobs:
   run-bot:
@@ -49,6 +54,7 @@ jobs:
           DEFAULT_SLUGS: ${{ secrets.DEFAULT_SLUGS }}
           GIST_ID: ${{ secrets.GIST_ID }}
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          TARGET_CHAT_ID: ${{ github.event.inputs.target_chat_id }}
         run: python arena_refs_bot.py
 
       - name: Save seen_ids

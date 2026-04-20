@@ -720,6 +720,16 @@ def run_for_subscriber(sub: dict, all_seen_ids: set[int]) -> set[int]:
 def run():
     global SUBSCRIBERS, TELEGRAM_CHAT_ID
     SUBSCRIBERS = _parse_subscribers()
+
+    target_chat_id = os.environ.get("TARGET_CHAT_ID", "").strip()
+    if target_chat_id:
+        matching = [s for s in SUBSCRIBERS if s["chat_id"] == target_chat_id]
+        if not matching:
+            log.error("TARGET_CHAT_ID=%s не найден среди подписчиков — exit 1", target_chat_id)
+            raise SystemExit(1)
+        SUBSCRIBERS = matching
+        log.info("Режим /more: только для chat_id=%s", target_chat_id)
+
     TELEGRAM_CHAT_ID = SUBSCRIBERS[0]["chat_id"] if SUBSCRIBERS else ""
     log.info("═══ Are.na Daily Refs Bot ═══")
     log.info("Подписчиков: %d", len(SUBSCRIBERS))
