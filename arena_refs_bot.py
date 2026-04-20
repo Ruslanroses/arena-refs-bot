@@ -121,6 +121,9 @@ DAILY_MAX = int(os.environ.get("DAILY_MAX", 40))
 # файл для хранения уже виденных block id
 SEEN_IDS_FILE = Path(os.environ.get("SEEN_IDS_FILE", "seen_ids.json"))
 
+CHANNELS_CACHE_FILE = Path(os.environ.get("CHANNELS_CACHE_FILE", "channels_cache.json"))
+CHANNELS_CACHE_TTL_DAYS = 3
+
 ARENA_BASE  = "https://api.are.na/v2"
 TG_BASE     = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 PER_PAGE    = 100   # максимум для Are.na API
@@ -202,6 +205,61 @@ def get_block_channels(block_id: int, max_pages: int = 3) -> list[dict]:
     return channels
 
 
+def load_channels_cache() -> dict:
+    """Загружает channels_cache.json или возвращает пустой cache."""
+    if not CHANNELS_CACHE_FILE.exists():
+        return {"channels": {}}
+    try:
+        data = json.loads(CHANNELS_CACHE_FILE.read_text())
+        if "channels" not in data:
+            data["channels"] = {}
+        log.info("channels_cache: %d каналов в кэше", len(data["channels"]))
+        return data
+    except Exception as e:
+        log.warning("channels_cache: не удалось прочитать (%s), старт с пустого", e)
+        return {"channels": {}}
+
+
+def save_channels_cache(cache: dict) -> None:
+    """Атомарная запись через tmp + rename."""
+    cache["updated"] = datetime.utcnow().isoformat() + "Z"
+    tmp = CHANNELS_CACHE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cache))
+    tmp.rename(CHANNELS_CACHE_FILE)
+    log.info("channels_cache сохранён: %d каналов", len(cache.get("channels", {})))
+
+
+def get_channel_block_ids_cached(channel_id: int, cache: dict) -> set[int]:
+    """Возвращает block_ids канала с кэшем (3-дневный TTL).
+
+    Cache hit → возврат из файла без API вызова.
+    Cache miss или expired → вызов get_channel_block_ids + сохранение в cache.
+    """
+    key = str(channel_id)
+    entry = cache.get("channels", {}).get(key)
+    if entry:
+        # Проверка TTL внутри файла (доп. защита сверху GHA cache)
+        try:
+            fetched = datetime.fromisoformat(entry["fetched_at"].rstrip("Z"))
+            age_days = (datetime.utcnow() - fetched).total_seconds() / 86400
+            if age_days < CHANNELS_CACHE_TTL_DAYS:
+                log.info("Cache HIT: channel_id=%d (%d block_ids, age=%.1fd)",
+                         channel_id, len(entry["block_ids"]), age_days)
+                return set(entry["block_ids"])
+            log.info("Cache EXPIRED: channel_id=%d (age=%.1fd)", channel_id, age_days)
+        except Exception:
+            pass  # bad timestamp — считаем miss
+    # Cache MISS
+    log.info("Cache MISS: channel_id=%d, фетчу из API", channel_id)
+    ids = get_channel_block_ids(channel_id)
+    cache.setdefault("channels", {})[key] = {
+        "block_ids": sorted(ids),
+        "fetched_at": datetime.utcnow().isoformat() + "Z",
+    }
+    save_channels_cache(cache)
+    return ids
+
+
 def get_channel_block_ids(channel_id: int) -> set[int]:
     """Быстро берём только id блоков из канала (первые 3 страницы)."""
     ids = set()
@@ -267,6 +325,8 @@ def discover_new_blocks(
       source_blocks → смежные каналы → блоки из этих каналов
     Возвращает отсортированный по score список новых блоков.
     """
+    channels_cache = load_channels_cache()
+
     source_ids = {b["id"] for b in source_blocks}
     all_known  = source_ids | known_ids
 
@@ -305,7 +365,7 @@ def discover_new_blocks(
                 if source_slugs and ch_slug in source_slugs:
                     continue
 
-                ch_block_ids = get_channel_block_ids(ch_id)
+                ch_block_ids = get_channel_block_ids_cached(ch_id, channels_cache)
                 for new_id in ch_block_ids:
                     if new_id in all_known:
                         continue
@@ -383,6 +443,7 @@ def discover_new_blocks(
 
     # применяем умный фильтр
     result = smart_filter(result, candidates, target_count)
+    save_channels_cache(channels_cache)
     return result
 
 
