@@ -19,6 +19,18 @@ jobs:
       - name: Install dependencies
         run: pip install httpx
 
+      - name: Compute 3-day cache bucket
+        id: cache_bucket
+        run: echo "key=channels-cache-$(( $(date +%s) / 259200 ))" >> $GITHUB_OUTPUT
+
+      - name: Restore channels cache
+        uses: actions/cache@v4
+        with:
+          path: channels_cache.json
+          key: ${{ steps.cache_bucket.outputs.key }}
+          restore-keys: |
+            channels-cache-
+
       - name: Restore seen_ids
         uses: actions/cache@v4
         with:
@@ -45,3 +57,10 @@ jobs:
         with:
           path: seen_*.json
           key: seen-ids-${{ github.run_id }}
+
+      - name: Save channels cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: channels_cache.json
+          key: ${{ steps.cache_bucket.outputs.key }}
