@@ -48,8 +48,8 @@ jobs:
           ARENA_TOKEN: ${{ secrets.ARENA_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SUBSCRIBERS: ${{ secrets.SUBSCRIBERS }}
-          DAILY_MIN: 20
-          DAILY_MAX: 40
+          DAILY_MIN: 15
+          DAILY_MAX: 15
           BOT_NAME: RefArena
           DEFAULT_SLUGS: ${{ secrets.DEFAULT_SLUGS }}
           GIST_ID: ${{ secrets.GIST_ID }}
